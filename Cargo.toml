@@ -1,0 +1,29 @@
+# Copyright (c) Privasys. All rights reserved.
+# Licensed under the GNU Affero General Public License v3.0.
+
+[package]
+name = "enclave-verifier"
+version = "0.1.0"
+edition = "2021"
+description = "WASM app that verifies a remote Privasys enclave"
+license = "AGPL-3.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { version = "0.39", features = ["bitflags"] }
+
+[package.metadata.component]
+package = "privasys:enclave-verifier"
+
+[package.metadata.component.target.dependencies]
+"wasi:io" = { path = "wit/deps/io" }
+"wasi:clocks" = { path = "wit/deps/clocks" }
+"wasi:random" = { path = "wit/deps/random" }
+"privasys:enclave-os" = { path = "wit/deps/enclave-os" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = "debuginfo"

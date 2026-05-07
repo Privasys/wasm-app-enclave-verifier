@@ -1,0 +1,114 @@
+// Copyright (c) Privasys. All rights reserved.
+// Licensed under the GNU Affero General Public License v3.0.
+//
+// WIT for `enclave-verifier` — a thin WASM app that verifies a remote
+// Privasys enclave by performing an RA-TLS handshake to the supplied URL.
+
+package privasys:enclave-verifier;
+
+world enclave-verifier {
+    // ── WASI imports ──────────────────────────────────────────────
+    import wasi:io/error@0.2.0;
+    import wasi:io/poll@0.2.0;
+    import wasi:io/streams@0.2.0;
+    import wasi:clocks/wall-clock@0.2.0;
+
+    // ── Enclave OS platform imports ──────────────────────────────
+    import privasys:enclave-os/https@0.1.0;
+
+    // ── Type definitions ──────────────────────────────────────────
+
+    /// Which TEE technology the target enclave is expected to run on.
+    enum tee-type {
+        /// Intel SGX (DCAP v3) — enclave-os-mini.
+        sgx,
+        /// Intel TDX (DCAP v4) — enclave-os-virtual.
+        tdx,
+    }
+
+    /// An X.509 extension OID and the exact bytes we expect to find for it
+    /// in the target enclave's leaf certificate.  The verifier rejects the
+    /// handshake if the OID is absent or its value differs.
+    record oid-requirement {
+        /// Dotted-string OID (e.g. `"1.3.6.1.4.1.65230.2.5"`).
+        oid: string,
+        /// Expected raw extension value — must match byte-for-byte.
+        expected-value: list<u8>,
+    }
+
+    /// Input to `verify`.
+    ///
+    /// Only `url` is required.  The remaining fields narrow the policy; an
+    /// empty / `none` field means "do not check this property".
+    record verify-request {
+        /// HTTPS URL of the app deployed on the Privasys platform.
+        url: string,
+        /// Target TEE type.  Defaults to `sgx` (enclave-os-mini) when not set.
+        tee: option<tee-type>,
+        /// X.509 extensions the leaf cert must carry.
+        oid-requirements: option<list<oid-requirement>>,
+        /// Attestation-server URLs that must each confirm the quote.
+        attestation-servers: option<list<string>>,
+        /// DER-encoded root-CA certificates to trust as the sole chain
+        /// anchors.  When `some`, **replaces** the default Mozilla bundle —
+        /// only the supplied DERs are trusted.  When `none`, the Mozilla
+        /// bundle is used.
+        ca-roots-der: option<list<list<u8>>>,
+        /// Challenge nonce for challenge-response attestation.  When present,
+        /// the verifier sends it in the ClientHello (extension 0xFFBB) and
+        /// checks the server bound it into the quote's ReportData.
+        challenge-nonce: option<list<u8>>,
+        /// Expected MRENCLAVE (SGX, 32 bytes).
+        mr-enclave: option<list<u8>>,
+        /// Expected MRSIGNER (SGX, 32 bytes).
+        mr-signer: option<list<u8>>,
+        /// Expected MRTD (TDX, 48 bytes).
+        mr-td: option<list<u8>>,
+    }
+
+    /// Well-known failure categories.  Any other verification failure is
+    /// surfaced as `other` with a free-form message.
+    enum error-code {
+        /// `url` was empty or not a valid `https://` URL.
+        invalid-url,
+        /// TCP connect failed before TLS could start.
+        connection-failed,
+        /// TLS chain validation failed (not an attestation check).
+        tls-chain-invalid,
+        /// Leaf cert had no attestation quote, or it was the wrong TEE type.
+        quote-missing-or-wrong-tee,
+        /// MRENCLAVE / MRSIGNER / MRTD did not match the requested values.
+        measurement-mismatch,
+        /// Quote's ReportData did not match the expected pubkey/binding hash.
+        report-data-mismatch,
+        /// A requested OID was missing or carried the wrong value.
+        oid-mismatch,
+        /// An attestation server refused the quote or was unreachable.
+        attestation-server-rejected,
+        /// `ca-root-der` failed to parse as a valid CA certificate.
+        invalid-ca-root,
+        /// Anything else — see `error-message` for detail.
+        other,
+    }
+
+    /// Result of a `verify` call.
+    ///
+    /// On success, `success = true`, `error-code = none`, `error-message = none`.
+    /// On failure, `success = false` and the two error fields describe the
+    /// first check that rejected the handshake.
+    record verify-result {
+        success: bool,
+        error-code: option<error-code>,
+        error-message: option<string>,
+        /// The URL that was verified, echoed back for convenience.
+        target-url: string,
+    }
+
+    /// Verify that the enclave serving `url` produces a valid RA-TLS
+    /// certificate that satisfies every constraint in `request`.
+    ///
+    /// The function issues a single `HEAD` request over RA-TLS.  The
+    /// response body is discarded — only the handshake outcome is relevant.
+    /// @auth public
+    export verify: func(request: verify-request) -> verify-result;
+}
